@@ -54,8 +54,8 @@ def main():
         # create the open-source embedding function
         embedding_function = AzureOpenAIEmbeddings(
             openai_api_type = "azure",
-            openai_api_key = "cd7bc404225847f984753fcf60d1f3cf",
-            azure_endpoint = "https://aai-aiml-apps.openai.azure.com/",
+            openai_api_key = "key",
+            azure_endpoint = "endpoint",
             deployment = "text-embedding-ada-002",
             model = "text-embedding-ada-002"
         )
@@ -77,8 +77,8 @@ def main():
         # create the open-source embedding function
         embedding_function = AzureOpenAIEmbeddings(
             openai_api_type = "azure",
-            openai_api_key = "cd7bc404225847f984753fcf60d1f3cf",
-            azure_endpoint = "https://aai-aiml-apps.openai.azure.com/",
+            openai_api_key = "key",
+            azure_endpoint = "endpoint",
             deployment = "text-embedding-ada-002",
             model = "text-embedding-ada-002"
         )
@@ -88,8 +88,8 @@ def main():
     if run:
         embedding_function = AzureOpenAIEmbeddings(
             openai_api_type = "azure",
-            openai_api_key = "cd7bc404225847f984753fcf60d1f3cf",
-            azure_endpoint = "https://aai-aiml-apps.openai.azure.com/",
+            openai_api_key = "key",
+            azure_endpoint = "endpoint",
             deployment = "text-embedding-ada-002",
             model = "text-embedding-ada-002"
         )
@@ -129,11 +129,11 @@ def main():
         os.environ.pop('OPENAI_API_BASE', None)
 
         llm= AzureChatOpenAI(
-                openai_api_key = "cd7bc404225847f984753fcf60d1f3cf",
+                openai_api_key = "key",
                 openai_api_version = "2023-03-15-preview",
                 # model = "gpt-35-turbo",
                 azure_deployment = "gpt-35-turbo",
-                azure_endpoint = "https://aai-aiml-apps.openai.azure.com/",
+                azure_endpoint = "service-endpoint",
                 temperature = 0,
                 # model = "gpt-3.5-turbo"
             )
