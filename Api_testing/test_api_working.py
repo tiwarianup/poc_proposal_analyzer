@@ -1,41 +1,48 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import tempfile
+from pypdf import PdfReader
+from langchain_community.document_loaders import PyPDFLoader
+from io import BytesIO
+import streamlit as st
+import tempfile
 import os
 from langchain_community.vectorstores import FAISS
+import requests
+# from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_openai import OpenAIEmbeddings, AzureChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
+from langchain_openai import AzureChatOpenAI
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.pydantic_v1 import BaseModel, Field
 from typing import List
+from langchain_core.output_parsers import JsonOutputParser
 from dotenv import load_dotenv
 
 load_dotenv()
-
-app = FastAPI()
 
 # Azure OpenAI settings
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
 
+app = FastAPI()
 
-import tempfile
-
-def load_document(file):
-  with tempfile.SpooledTemporaryFile(mode='wb') as tmp_file:
-      tmp_file.write(file.read())
-      tmp_file.seek(0)
-      loader = PyPDFLoader(tmp_file.name)
-      documents = loader.load()
-      text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=0)
-      docs = text_splitter.split_documents(documents)
-  return docs
+def load_document(text):
+    # with tempfile.SpooledTemporaryFile(mode='wb') as tmp_file:
+    #     tmp_file.write(file.read())
+    #     tmp_file.seek(0)
+    # loader = PyPDFLoader(tmp_file.name)
+    # documents = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=0)
+    # docs = text_splitter.split_documents(documents)
+    docs= text_splitter.create_documents([text])
+    return docs
 
 def create_vector_db(docs, path):
   embedding_function = AzureOpenAIEmbeddings(
@@ -48,7 +55,6 @@ def create_vector_db(docs, path):
   db = FAISS.from_documents(docs, embedding_function)
   db.save_local(path)
   return db
-
 
 def load_vector_db(path):
   embedding_function = AzureOpenAIEmbeddings(
@@ -143,44 +149,66 @@ def analyze_eligibility(rfp_content, proposal_content):
 
   return result
 
-
-
-@app.post("/analyze/")
-async def analyze(rfp_file: UploadFile = File(...), proposal_file: UploadFile = File(...)):
-  if not all([AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT]):
+@app.post("/count-characters/")
+async def count_characters(rfp_file: UploadFile = File(...), proposal_file: UploadFile = File(...)):
+    if not all([AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT]):
       raise HTTPException(status_code=500, detail="Azure OpenAI settings are not properly configured")
+    try:
+        # Read the uploaded file
+        r_content = await rfp_file.read()
+        p_content= await proposal_file.read()
+        r_pdf_file = BytesIO(r_content)
+        p_pdf_file = BytesIO(p_content)
+    
+        
+        # Create a PDF reader object
+        r_pdf_reader = PdfReader(r_pdf_file)
+        p_pdf_reader = PdfReader(p_pdf_file)
+        
+        # Extract text from all pages
+        # Load and process RFP
+        
+        
+        r_text = ""
+        for page in r_pdf_reader.pages:
+            r_text += page.extract_text()
+        r_docs=load_document(r_text)
+        rfp_db = create_vector_db(r_docs, f"vectorstore/RFP/{rfp_file.filename}")
 
-  try:
-      # Load and process RFP
-      rfp_docs = load_document(rfp_file.file)
-      rfp_db = create_vector_db(rfp_docs, f"vectorstore/RFP/{rfp_file.filename}")
+        # Extract text from all pages
+        # Load and process Proposal doc
+        p_text = ""
+        for page in p_pdf_reader.pages:
+            p_text += page.extract_text()
+        p_docs=load_document(p_text)
+        proposal_db = create_vector_db(p_docs, f"vectorstore/Proposals/{proposal_file.filename}")
 
-      # Load and process Proposal
-      proposal_docs = load_document(proposal_file.file)
-      proposal_db = create_vector_db(proposal_docs, f"vectorstore/Proposals/{proposal_file.filename}")
+        # Retrieve relevant content
+        rfp_content = rfp_db.similarity_search("eligibility criteria", k=20)
+        proposal_content = proposal_db.similarity_search("company background and qualifications", k=20)
 
-      # Retrieve relevant content
-      rfp_content = rfp_db.similarity_search("eligibility criteria", k=20)
-      proposal_content = proposal_db.similarity_search("company background and qualifications", k=20)
+        # Combine retrieved content
+        rfp_text = " ".join([doc.page_content for doc in rfp_content])
+        proposal_text = " ".join([doc.page_content for doc in proposal_content])
 
-      # Combine retrieved content
-      rfp_text = " ".join([doc.page_content for doc in rfp_content])
-      proposal_text = " ".join([doc.page_content for doc in proposal_content])
+        # Generate RFP Eligibility
+        ref_eligibility = genrating_eligbility(rfp_text)
 
-      # Generate RFP Eligibility
-      ref_eligibility = genrating_eligbility(rfp_text)
+        # Analyze eligibility
+        analysis = analyze_eligibility(ref_eligibility, proposal_text)
+        
 
-      # Analyze eligibility
-      analysis = analyze_eligibility(ref_eligibility, proposal_text)
+        return {"Result":analysis}
 
-      return JSONResponse(content=analysis.dict())
-  except FileNotFoundError:
-      raise HTTPException(status_code=404, detail="File not found")
-  except ValueError as ve:
-      raise HTTPException(status_code=400, detail=str(ve))
-  except Exception as e:
-      raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+    
 
 if __name__ == "__main__":
-  import uvicorn
-  uvicorn.run(app, host="0.0.0.0", port=8000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

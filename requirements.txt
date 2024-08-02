@@ -3,5 +3,9 @@ langchain
 langchain-community
 langchain_openai
 pymupdf
-pymupdf
+pypdf
 faiss-cpu
+streamlit
+fastapi
+uvicorn
+python-multipart

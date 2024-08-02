@@ -25,17 +25,19 @@ AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
 
 
-import tempfile
-
 def load_document(file):
-  with tempfile.SpooledTemporaryFile(mode='wb') as tmp_file:
+  with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
       tmp_file.write(file.read())
-      tmp_file.seek(0)
-      loader = PyPDFLoader(tmp_file.name)
-      documents = loader.load()
-      text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=0)
-      docs = text_splitter.split_documents(documents)
+      tmp_file_path = tmp_file.name
+
+  loader = PyPDFLoader(tmp_file_path)
+  documents = loader.load()
+  text_splitter = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=0)
+  docs = text_splitter.split_documents(documents)
+
+  os.unlink(tmp_file_path)
   return docs
+
 
 def create_vector_db(docs, path):
   embedding_function = AzureOpenAIEmbeddings(
@@ -144,24 +146,22 @@ def analyze_eligibility(rfp_content, proposal_content):
   return result
 
 
-
 @app.post("/analyze/")
 async def analyze(rfp_file: UploadFile = File(...), proposal_file: UploadFile = File(...)):
-  if not all([AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT]):
-      raise HTTPException(status_code=500, detail="Azure OpenAI settings are not properly configured")
-
   try:
       # Load and process RFP
-      rfp_docs = load_document(rfp_file.file)
-      rfp_db = create_vector_db(rfp_docs, f"vectorstore/RFP/{rfp_file.filename}")
+      rfp_docs = load_document(rfp_file)
+      rfp_db = create_vector_db(rfp_docs, "vectorstore/RFP/")
 
       # Load and process Proposal
-      proposal_docs = load_document(proposal_file.file)
-      proposal_db = create_vector_db(proposal_docs, f"vectorstore/Proposals/{proposal_file.filename}")
+      proposal_docs = load_document(proposal_file)
+      proposal_db = create_vector_db(proposal_docs, "vectorstore/Proposals/")
 
       # Retrieve relevant content
       rfp_content = rfp_db.similarity_search("eligibility criteria", k=20)
-      proposal_content = proposal_db.similarity_search("company background and qualifications", k=20)
+      proposal_content = proposal_db.similarity_search(
+          "company background and qualifications", k=20
+      )
 
       # Combine retrieved content
       rfp_text = " ".join([doc.page_content for doc in rfp_content])
@@ -174,12 +174,9 @@ async def analyze(rfp_file: UploadFile = File(...), proposal_file: UploadFile = 
       analysis = analyze_eligibility(ref_eligibility, proposal_text)
 
       return JSONResponse(content=analysis.dict())
-  except FileNotFoundError:
-      raise HTTPException(status_code=404, detail="File not found")
-  except ValueError as ve:
-      raise HTTPException(status_code=400, detail=str(ve))
   except Exception as e:
-      raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+      raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
   import uvicorn
